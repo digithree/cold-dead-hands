@@ -66,7 +66,7 @@ entry
                 sta BGCOLOR             ; change background color
                 sta BORDERCOLOR         ; change border color
 
-                ldy #$0c                ; the string "hello world!" has 12 (= $0c) characters
+                ldy #$1b                ; the string "hello world!" has 12 (= $0c) characters
                 ldx #$00                ; start at position 0 of the string
 
 character_loop
@@ -78,4 +78,4 @@ character_loop
                 bne character_loop      ; is y positive? then repeat
                 rts                     ; exit the program
 
-hello           !scr "hello world!"     ; our string to display
+hello           !scr "hello world! this is a test"     ; our string to display
