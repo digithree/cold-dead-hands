@@ -98,7 +98,7 @@ label_7070
                 sta minute
                 jmp STD_INT
 label_708D
-                lda #$13
+                lda #$13              ; clear screen (cursor to top left)
                 jsr FN_CHROUT
                 lda #$00
                 ldx hour

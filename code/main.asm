@@ -1,81 +1,195 @@
 ;==========================================================
-; 6502 assembly template for VSCode
-; created 2019 by Ingo Hinterding // awsm of Mayday
+; Cold Dead Hands
 ;
-; Check github repo for setup instructions & help
-; https://github.com/Esshahn/acme-assembly-vscode-template
-; If you found this useful, I would be happy to know :)
-; 
-; https://www.twitter.com/awsm9000
-; http://www.awsm.de
+; MAIN source file, build entry point.
+;
 ;==========================================================
 
 ;==========================================================
-; LABELS
-; Comment or uncomment the lines below 
-; Depending on your target machine
+; SYSTEM AND KERNAL ROUTINES
 ;==========================================================
 
-; VC20
-;BGCOLOR       = $900f
-;BORDERCOLOR   = $900f
-;BASIC         = $1001
-;SCREENRAM     = $1e00
-
-; C16, C116, Plus/4
-;BGCOLOR      = $ff15
-;BORDERCOLOR  = $ff19
-;BASIC        = $1001
-;SCREENRAM    = $0c00
-
-; C128
-;BGCOLOR       = $d020
-;BORDERCOLOR   = $d021
-;BASIC         = $1c01
-;SCREENRAM     = $0400
-
-; C64
-BGCOLOR       = $d020
-BORDERCOLOR   = $d021
-BASIC         = $0801
-SCREENRAM     = $0400
-
-;==========================================================
-; BASIC header
-;==========================================================
-
-* = BASIC
-
-                !byte $0b, $08
-                !byte $E3                     ; BASIC line number:  $E2=2018 $E3=2019 etc       
-                !byte $07, $9E
-                !byte '0' + entry % 10000 / 1000        
-                !byte '0' + entry %  1000 /  100        
-                !byte '0' + entry %   100 /   10        
-                !byte '0' + entry %    10             
-                !byte $00, $00, $00           ; end of basic
-
+STD_INT         = $EA31     ; KERNAL standard interrupt service routine to handle keyboard scan, cursor display etc.
+FN_SCR_WRITE_F  = $BDCD     ; Write integer value in A/X onto screen, in floating-point format.
+FN_CHROUT       = $FFD2     ; Write byte to default output, input A = byte to write
 
 ;==========================================================
 ; CODE
 ;==========================================================
 
+;!to "main.prg"
+
+!macro start_at .address {
+  * = $0801
+  !byte $0c,$08,$00,$00,$9e
+  !if .address >= 10000 { !byte 48 + ((.address / 10000) % 10) }
+  !if .address >=  1000 { !byte 48 + ((.address /  1000) % 10) }
+  !if .address >=   100 { !byte 48 + ((.address /   100) % 10) }
+  !if .address >=    10 { !byte 48 + ((.address /    10) % 10) }
+  !byte $30 + (.address % 10), $00, $00, $00
+  * = .address
+}
+
++start_at $0900
+
+* = $0900
+
 entry
+  ;jsr clear_screen
+  jsr black_screen
+;draw_character
+  ;lda #$53      ; heart character
+  ;sta $05F4
+  ;lda #$02      ; red foreground
+  ;sta $D9F4
+  ldx #$70
+  jsr draw_screen
 
-                lda #$00                ; the color value
-                sta BGCOLOR             ; change background color
-                sta BORDERCOLOR         ; change border color
+  jmp *
 
-                ldy #$1b                ; the string "hello world!" has 12 (= $0c) characters
-                ldx #$00                ; start at position 0 of the string
+; === clear_screen
+clear_screen
+  clc           ; clear carry flag
+  lda #$00      ; put address $0400 (end of screen chars) at zero page $14+1
+  tay           ; - save #$00 to Y for later
+  sta $14
+  lda #$04
+  sta $15
+  lda #$E8      ; put high byte of address $07E8 (end of screen chars + 1) at zero page $16
+  sta $16
+  ldx #$08      ; load low byte of address $07E8 to X
+  lda #$E0      ; put screen char reverse SPACE in A
+clear_screen_loop_1
+  sta ($14), Y  ; [$15$14]+Y = #$00
+  iny
+  bne clear_screen_skip_1
+  inc $15
+  jmp clear_screen_loop_1
+clear_screen_skip_1
+  cpx $15       ; check low byte of address $07E8 (end of screen chars + 1) against current addr low byte (zero page)
+  bne clear_screen_loop_1
+  cpy $16       ; check high byte of address $07E8 (end of screen chars + 1) against current addr high byte (in Y)
+  bne clear_screen_loop_1
+  rts
+; === black_screen
+black_screen
+  lda #$01
+  sta $D020
+  lda #$00
+  sta $D021
+  rts
+; === draw_screen
+; X <- base page for char (+1k for col)
+draw_screen
+  clc           ; clear carry flag
+  lda #$00      ; put address $0400 (end of screen chars) at zero page $14+1
+  sta $20
+  lda #$04
+  sta $21
+  lda #$00      ; put address $D800 (start of color chars) at zero page $14+1
+  tay           ; - save #$00 to Y for later
+  sta $14
+  lda #$D8
+  sta $15
+  lda #$E8      ; put address $DBE8 (end of color chars) at zero page $16+1
+  sta $16
+  lda #$DB
+  sta $17
+  lda #$00      ; put address $8000 (character data) at zero page $18+1
+  sta $18
+  txa           ; load base high byte
+  sta $19
+  ldx #$E0      ; reverse SPACE (block) character in X
+draw_screen_loop_1
+  lda ($18), Y  ; A = [$19$18]+Y (next char data)
+  sta ($14), Y  ; [$12$13]+Y = A
+  txa           ; X -> A for block char
+  sta ($20), Y  ; [$15$14]+Y = A
+  iny
+  bne draw_screen_skip_1
+  inc $15
+  inc $19
+  inc $21
+  jmp draw_screen_loop_1
+draw_screen_skip_1
+  lda $17       ; load low byte of target address
+  cmp $15       ; check A against low byte of address $07E8 (end of screen chars + 1)
+  bne draw_screen_loop_1
+  cpy $16       ; check cur high byte (Y) against high byte of address $07E8 (end of screen chars + 1)
+  bne draw_screen_loop_1
+  rts
 
-character_loop
+* = $7000
+map_data
 
-                lda hello,x             ; load character number x of the string
-                sta SCREENRAM,x         ; save it at position x of the screen ram
-                inx                     ; increment x by 1
-                dey                     ; decrement y by 1
-                bne character_loop      ; is y positive? then repeat
-                rts                     ; exit the program
+!byte $00,$01,$02,$03,$04,$05,$06,$07,$08,$09,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$0a,$0b,$0c,$0d,$0e,$0f,$00,$00
+!byte $00,$00,$00,$00,$00,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$02,$02,$02,$02,$02,$02
+!byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$02,$02,$06,$06,$06,$06,$06,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$02,$06,$02,$06,$02,$06,$06
+!byte $02,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $02,$02,$06,$02,$06,$02,$06,$06,$02,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$02,$02,$06,$06,$06,$06,$06,$06
+!byte $02,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$02,$02,$06,$06,$06,$06,$02,$02,$0d,$0d,$0d,$0d,$0d,$0d,$0d
+!byte $0d,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$02,$02,$02,$02,$02,$02,$02
+!byte $00,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$0d,$0d,$0d,$0d,$0d,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00,$00
+!byte $00,$00,$00,$00,$00,$00,$00,$00
 
-hello           !scr "hello world! this is a test"     ; our string to display
+;0-bedroom
+!byte $00,$05,$11,$FF,$01,$FF,$FF   ;pos0 - type item list, #0; pos(05/0x05,17/0x11); U:-1, D: 1, L:-1, R:-1
+!byte $01,$05,$17,$00,$FF,$FF,$02   ;pos1 - type item list, #1; pos(05/0x05,23/0x17); U: 0, D:-1, L:-1, R: 2
+!byte $02,$0E,$15,$FF,$FF,$01,$03   ;pos2 - type item list, #2; pos(14/0x0E,21/0x15); U:-1, D:-1, L: 1, R: 3
+!byte $81,$1B,$17,$05,$FF,$02,$04   ;pos3 - type link to,   #1; pos(27/0x1B,23/0x17); U: 5, D:-1, L: 2, R: 4
+!byte $83,$22,$16,$05,$03,$03,$FF   ;pos4 - type link to  , #3; pos(34/0x22,22/0x16); U: 5, D: 3, L: 3, R:-1
+!byte $03,$1A,$0D,$FF,$03,$FF,$04   ;pos5 - type item list, #3; pos(26/0x1A,15/0x0D); U:-1, D: 3, L:-1, R: 4
