@@ -58,7 +58,32 @@ map_screen_loop
   tax             ; A -> X, X is param for draw_screen base page
   jsr draw_screen
 position_loop
-  ; TODO - the rest
+  lda #<map_meta_data_table
+  sta $14
+  lda #>map_meta_data_table
+  sta $15
+  ldy var_map_cur
+  lda ($14), Y
+  sta $16
+  iny
+  lda ($14), Y
+  sta $17
+  ldy #$00
+  ;lda ($16), Y    ; number of positions
+  ;tax
+  ldx var_map_pos  ; set X = pos, +1 as we'll skip to infos for that position by looping via X
+  inx
+  lda #$01 ;offset for first position
+position_loop_add_loop
+  adc #$07  ;position info byte size
+  dex ;loop counter--
+  bne position_loop_add_loop
+  tay ; result of looped addition -> Y, for pointer offset
+  sty $18 ;temp store Y -> Z-pg$18
+set_position
+  ldy $18
+  ; TODO : load, using offset, etc.
+  ;lda ($16), Y    ; number of positions
 have_some_heart
   lda #$53      ; heart character
   sta $05F4
@@ -167,8 +192,10 @@ draw_screen_skip_1
 const_bag_size
   !byte $1E     ; size of bag (30)
 ; addresses
-const_map_meta_base
-  !byte $00,$60 ; $6000
+const_map_meta_base_low
+  !byte $00 ; low byte of addr $6000
+const_map_meta_base_high
+  !byte $60 ; high byte of addr $6000
 const_map_img_base_low
   !byte $70
 
@@ -186,21 +213,27 @@ var_map_pos
 
 ;==========================================================
 ; MAP META DATA
+;
+; First byte in set of positions is number of positions.
+; Positions are always 7 bytes long, with maximum 6 positions.
 ;==========================================================
+* = $6000
 
-* = $7000
+map_meta_data_table
+  !byte <#map_meta_data_1, >#map_meta_data_1
 
-map_data
-
+map_meta_data_1
 ;0-bedroom, 1 + (6 * 7) = 43 bytes of info
-!byte $06   ; 6 positions in this map
-!byte $00,$05,$11,$FF,$01,$FF,$FF   ;pos0 - type item list, #0; pos(05/0x05,17/0x11); U:-1, D: 1, L:-1, R:-1
-!byte $01,$05,$17,$00,$FF,$FF,$02   ;pos1 - type item list, #1; pos(05/0x05,23/0x17); U: 0, D:-1, L:-1, R: 2
-!byte $02,$0E,$15,$FF,$FF,$01,$03   ;pos2 - type item list, #2; pos(14/0x0E,21/0x15); U:-1, D:-1, L: 1, R: 3
-!byte $81,$1B,$17,$05,$FF,$02,$04   ;pos3 - type link to,   #1; pos(27/0x1B,23/0x17); U: 5, D:-1, L: 2, R: 4
-!byte $83,$22,$16,$05,$03,$03,$FF   ;pos4 - type link to  , #3; pos(34/0x22,22/0x16); U: 5, D: 3, L: 3, R:-1
-!byte $03,$1A,$0D,$FF,$03,$FF,$04   ;pos5 - type item list, #3; pos(26/0x1A,15/0x0D); U:-1, D: 3, L:-1, R: 4
+  !byte $06   ; 6 positions in this map
+  !byte $00,$05,$11,$FF,$01,$FF,$FF   ;pos0 - type item list, #0; pos(05/0x05,17/0x11); U:-1, D: 1, L:-1, R:-1
+  !byte $01,$05,$17,$00,$FF,$FF,$02   ;pos1 - type item list, #1; pos(05/0x05,23/0x17); U: 0, D:-1, L:-1, R: 2
+  !byte $02,$0E,$15,$FF,$FF,$01,$03   ;pos2 - type item list, #2; pos(14/0x0E,21/0x15); U:-1, D:-1, L: 1, R: 3
+  !byte $81,$1B,$17,$05,$FF,$02,$04   ;pos3 - type link to,   #1; pos(27/0x1B,23/0x17); U: 5, D:-1, L: 2, R: 4
+  !byte $83,$22,$16,$05,$03,$03,$FF   ;pos4 - type link to  , #3; pos(34/0x22,22/0x16); U: 5, D: 3, L: 3, R:-1
+  !byte $03,$1A,$0D,$FF,$03,$FF,$04   ;pos5 - type item list, #3; pos(26/0x1A,15/0x0D); U:-1, D: 3, L:-1, R: 4
 ;1-kitchen1
+
+
 
 ;==========================================================
 ; MAP IMAGE DATA
