@@ -12,7 +12,9 @@
 STD_INT         = $EA31     ; KERNAL standard interrupt service routine to handle keyboard scan, cursor display etc.
 FN_SCR_WRITE_F  = $BDCD     ; Write integer value in A/X onto screen, in floating-point format.
 FN_CHROUT       = $FFD2     ; Write byte to default output, input A = byte to write
-FN_GETIN        = $FFE4
+FN_GETIN        = $FFE4     ; get character from buffer (keyboard buffer unless changed)
+FN_PLOT         = $FFF0     ; set cursor position
+SCREENRAM       = $0400
 
 ; DATA STARTS HERE
 
@@ -37,6 +39,21 @@ FN_GETIN        = $FFE4
 ; CODE
 ;==========================================================
 
+title_screen
+  jsr clear_screen
+  jsr black_screen
+  ldy #$F0                ; entire string is
+  ldx #$00                ; start at position 0 of the string
+title_screen_char_loop
+  lda str_intro,x             ; load character number x of the string
+  sta SCREENRAM,x         ; save it at position x of the screen ram
+  inx                     ; increment x by 1
+  dey                     ; decrement y by 1
+  bne title_screen_char_loop      ; is y positive? then repeat
+title_screen_wait_for_input
+  jsr FN_GETIN
+  cmp #$00
+  beq title_screen_wait_for_input
 entry_and_first_time_setup
   lda #$24        ; set sprite data of player character (at block 36/0x24) = $0900 for sprite 0
   sta $07F8
@@ -51,22 +68,19 @@ entry_and_first_time_setup
   lda #$03
   sta $D01D       ; bit 0 and 1 on for horiztonal expand for sprite 0 and 1
   sta $D017       ; bit 0 and 1 on for vertical expand for sprite 0 and 1
-  ;jsr clear_screen
-  jsr black_screen
-;draw_character
 new_game_start
   jsr new_game_reset_vars
   lda #$00        ; set param map number for set_map
   sta var_map_cur
 new_map_screen
-  lda var_map_cur
-  jsr set_map
+  lda #$00        ; reset position number
+  sta var_map_pos
 map_screen_loop
   lda var_map_cur
-  rol            ; left shift << 4, 01 goes to 10, etc., to add to base img high byte
-  rol
-  rol
-  rol
+  asl            ; left shift << 4, 01 goes to 10, etc., to add to base img high byte
+  asl
+  asl
+  asl
   clc           ; clear carry flag before adding (would influence result if set)
   adc const_map_img_base_low  ; add map number index to base img high byte
   tax             ; A -> X, X is param for draw_screen base page
@@ -75,7 +89,7 @@ setup_sprite
   ; TODO
 position_loop
   ; get current position info for map
-  lda #$60          ; store high byte of base positions for map infos ($60XX) in $16 / $17, for further look up
+  lda #$50          ; store high byte of base positions for map infos ($50XX) in $16 / $17, for further look up
   sta $17
   ; move pointer to correct area for map var_map_cur
   lda #$00 ;offset counter to 00
@@ -88,7 +102,7 @@ position_loop_add_map_loop
   adc #$30 ;size of positions in a single map
   jmp position_loop_add_map_loop
 position_loop_add_map_loop_exit
-  sta $16           ; store LOW byte of base positions for map infos ($60XX) in $16 / $17, for further look up
+  sta $16           ; store LOW byte of base positions for map infos ($50XX) in $16 / $17, for further look up
   ; z$16 now at position 0 for map var_map_cur
 calc_map_position
   lda #$00          ; zero A for position offset, to be stored in Y and saved in $18
@@ -161,7 +175,7 @@ map_screen_wait_for_input
   cmp #$44        ; check if D, right
   beq map_screen_input_right
   cmp #$20        ; check if space, interact
-  beq map_screen_wait_for_input
+  beq map_screen_input_action
   jmp map_screen_wait_for_input
 map_screen_input_right ; Y to up data using passtrough technique
   inc $19
@@ -179,8 +193,23 @@ map_screen_input_read
   sta var_map_pos
   jmp calc_map_position
 map_screen_input_action
-  ; TODO : interaction
+  lda $19 ; restore pointer to Y, at item info
+  tay
+  lda ($16), Y
+  and #$80  ;mas A with 10000000
+  cmp #$80
+  beq map_screen_input_action_map_link
+  ; pass through, is item
+  ; TODO
   jmp map_screen_wait_for_input
+map_screen_input_action_map_link
+  lda $19             ; mask out highest bit to get map number
+  tay
+  lda ($16), Y
+  and #$7F
+  sta var_map_cur
+  jmp new_map_screen
+
 
 infinite_loop_unused
   jmp *
@@ -194,17 +223,6 @@ new_game_reset_vars
   ; TODO : set items carrying flag to off for all items
   rts
 
-; === set_map
-; A <- map number
-set_map
-  pha
-  sta var_map_cur
-  lda #$00
-  sta var_map_pos
-  pla
-  rts
-
-
 ; === clear_screen
 clear_screen
   clc           ; clear carry flag
@@ -216,7 +234,7 @@ clear_screen
   lda #$E8      ; put high byte of address $07E8 (end of screen chars + 1) at zero page $16
   sta $16
   ldx #$08      ; load low byte of address $07E8 to X
-  lda #$E0      ; put screen char reverse SPACE in A
+  lda #$20      ; put screen char SPACE in A
 clear_screen_loop_1
   sta ($14), Y  ; [$15$14]+Y = #$00
   iny
@@ -231,7 +249,7 @@ clear_screen_skip_1
   rts
 ; === black_screen
 black_screen
-  lda #$01
+  lda #$00
   sta $D020
   lda #$00
   sta $D021
@@ -286,7 +304,7 @@ const_bag_size
   !byte $1E     ; size of bag (30)
 ; addresses
 const_map_img_base_low
-  !byte $70
+  !byte $60
 
 ;==========================================================
 ; "VARIABLES" GLOBAL DATA, memory addresses for holding (near)
@@ -294,7 +312,7 @@ const_map_img_base_low
 
 ; default init value of $00, same for all vars
 var_map_img_base_low
-  !byte $00   ; stores the value of img base low (#$70) for arithmetic
+  !byte $00   ; stores the value of img base low (#$60) for arithmetic
 var_map_cur
   !byte $00   ; map number active
 var_map_pos
@@ -306,7 +324,7 @@ var_map_pos
 ; First byte in set of positions is number of positions.
 ; Positions are always 7 bytes long, with maximum 6 positions.
 ;==========================================================
-* = $6000
+* = $5000
 
 map_meta_data
 ;0-bedroom, 1 + (6 * 8) = 48 bytes (0x30) of info
@@ -317,26 +335,40 @@ map_meta_data
   !byte $22,$16,$83,$05,$03,$03,$FF,$00   ;pos(34/0x22,22/0x16); pos4 - type link to  , #3; U: 5, D: 3, L: 3, R:-1; empty
   !byte $1A,$0D,$03,$FF,$03,$FF,$04,$00   ;pos(26/0x1A,15/0x0D); pos5 - type item list, #3; U:-1, D: 3, L:-1, R: 4; empty
 ;1-kitchen1
-  !byte $02,$17,$00,$01,$FF,$FF,$01,$00   ;pos(02/0x02,23/0x17); pos0 - type item list, #0; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $02,$17,$82,$01,$FF,$FF,$01,$00   ;pos(02/0x02,23/0x17); pos0 - type link to,   #2; U:xx, D:xx, L:xx, R:xx; empty
   !byte $09,$15,$01,$02,$00,$00,$02,$00   ;pos(09/0x09,21/0x15); pos1 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
   !byte $0C,$11,$02,$FF,$01,$01,$04,$00   ;pos(12/0x0C,17/0x11); pos2 - type item list, #2; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $14,$10,$81,$FF,$FF,$02,$04,$00   ;pos(20/0x14,16/0x10); pos3 - type link to,   #1; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $1A,$13,$83,$FF,$05,$03,$05,$00   ;pos(26/0x1A,19/0x13); pos4 - type link to  , #3; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $22,$17,$03,$04,$FF,$04,$FF,$00   ;pos(34/0x22,23/0x17); pos5 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $14,$10,$01,$FF,$FF,$02,$04,$00   ;pos(20/0x14,16/0x10); pos3 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $1A,$13,$03,$FF,$05,$03,$05,$00   ;pos(26/0x1A,19/0x13); pos4 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $22,$17,$80,$04,$FF,$04,$FF,$00   ;pos(34/0x22,23/0x17); pos5 - type link to  , #0; U:xx, D:xx, L:xx, R:xx; empty
 ;1-kitchen2
   !byte $04,$17,$00,$01,$FF,$FF,$01,$00   ;pos(04/0x04,23/0x17); pos0 - type item list, #0; U:xx, D:xx, L:xx, R:xx; empty
   !byte $0D,$14,$01,$02,$00,$00,$02,$00   ;pos(13/0x0D,20/0x14); pos1 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
   !byte $0F,$11,$02,$FF,$01,$01,$03,$00   ;pos(15/0x0F,17/0x11); pos2 - type item list, #2; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $1B,$11,$81,$FF,$04,$02,$04,$00   ;pos(27/0x1B,17/0x11); pos3 - type link to,   #1; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $1B,$14,$83,$03,$05,$03,$05,$00   ;pos(27/0x1B,20/0x14); pos4 - type link to  , #3; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $22,$17,$03,$04,$FF,$04,$FF,$00   ;pos(34/0x22,23/0x17); pos5 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $1B,$11,$01,$FF,$04,$02,$04,$00   ;pos(27/0x1B,17/0x11); pos3 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $1B,$14,$03,$03,$05,$03,$05,$00   ;pos(27/0x1B,20/0x14); pos4 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $22,$17,$81,$04,$FF,$04,$FF,$00   ;pos(34/0x22,23/0x17); pos5 - type link to  , #1; U:xx, D:xx, L:xx, R:xx; empty
 ;1-bathroom
-  !byte $01,$17,$00,$FF,$FF,$FF,$01,$00   ;pos(01/0x01,23/0x17); pos0 - type item list, #0; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $01,$17,$80,$FF,$FF,$FF,$01,$00   ;pos(01/0x01,23/0x17); pos0 - type link to  , #0; U:xx, D:xx, L:xx, R:xx; empty
   !byte $07,$14,$01,$02,$FF,$00,$02,$00   ;pos(07/0x07,20/0x14); pos1 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
   !byte $0A,$12,$02,$FF,$01,$01,$03,$00   ;pos(10/0x0A,18/0x12); pos2 - type item list, #2; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $13,$12,$81,$FF,$04,$02,$04,$00   ;pos(19/0x13,18/0x12); pos3 - type link to,   #1; U:xx, D:xx, L:xx, R:xx; empty
-  !byte $1A,$16,$83,$03,$05,$03,$05,$00   ;pos(26/0x1A,22/0x16); pos4 - type link to  , #3; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $13,$12,$01,$FF,$04,$02,$04,$00   ;pos(19/0x13,18/0x12); pos3 - type item list, #1; U:xx, D:xx, L:xx, R:xx; empty
+  !byte $1A,$16,$03,$03,$05,$03,$05,$00   ;pos(26/0x1A,22/0x16); pos4 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
   !byte $21,$17,$03,$04,$FF,$04,$FF,$00   ;pos(33/0x21,23/0x17); pos5 - type item list, #3; U:xx, D:xx, L:xx, R:xx; empty
+
+;==========================================================
+; STRING DATA
+;==========================================================
+
+* = $5100
+
+str_intro
+  !scr "A girl finds herself in a large house.  "
+  !scr "She walks around and that's all.        "                           
+  !scr "In another more finished game that girl "
+  !scr "might investigate and scavenge as many  "
+  !scr "items as she can in a thrilling race    "
+  !scr "against time, but that's not this game. "
 
 ;==========================================================
 ; CHARACTER SPRITE DATA
@@ -345,10 +377,10 @@ map_meta_data
 * = $0900
 
 player_character_right
-  !byte $00,$54,$00,$03,$58,$00,$07,$68,$00,$07,$68,$00,$04,$68,$00,$04
-  !byte $a8,$00,$00,$a0,$00,$01,$50,$00,$01,$fc,$00,$01,$fc,$00,$01,$fc
-  !byte $00,$01,$fc,$00,$00,$e8,$00,$00,$e8,$00,$00,$fc,$00,$00,$a0,$00
-  !byte $00,$a0,$00,$00,$a0,$00,$00,$a0,$00,$00,$fc,$00,$00,$fc,$00,$81
+  !byte $00,$14,$00,$00,$55,$00,$00,$55,$00,$00,$5a,$00,$00,$5a,$00,$00
+  !byte $5a,$00,$00,$28,$00,$00,$54,$00,$00,$7f,$00,$00,$7f,$00,$00,$7f
+  !byte $00,$00,$7f,$00,$00,$3a,$00,$00,$3a,$00,$00,$3f,$00,$00,$28,$00
+  !byte $00,$28,$00,$00,$28,$00,$00,$28,$00,$00,$3f,$00,$00,$3f,$00,$81
 
 player_character_left
   !byte $00,$15,$00,$00,$25,$c0,$00,$29,$d0,$00,$29,$d0,$00,$29,$10,$00
@@ -360,7 +392,7 @@ player_character_left
 ; MAP IMAGE DATA
 ;==========================================================
 
-* = $7000
+* = $6000
 
 map_data_bedroom
 !byte $01,$01,$01,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e,$0e
@@ -427,7 +459,7 @@ map_data_bedroom
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$02,$0d,$0d,$0d,$0d,$0d,$02
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$01
 
-* = $8000
+* = $7000
 
 map_data_kitchen1
 !byte $01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$01
@@ -494,7 +526,7 @@ map_data_kitchen1
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$01
 
-* = $9000
+* = $8000
 
 map_data_kitchen2
 !byte $01,$01,$01,$01,$01,$01,$01,$01,$01,$01,$03,$01,$01,$01,$01,$01
@@ -561,7 +593,7 @@ map_data_kitchen2
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$01
 
-* = $A000
+* = $9000
 
 map_data_bathroom
 !byte $0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$0d,$08,$0d,$0d,$0d,$0d,$0d,$0d
